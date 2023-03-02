@@ -23,7 +23,7 @@ void add_process(pid_t pid);
 void update_terminate(pid_t pid, int status);
 void update_wait(pid_t pid, int index);
 void arg_parse(char **cmd, char ***arguments);
-void proc_exit();
+void update_exit();
 
 struct PCBTable processes[MAX_PROCESSES];
 int nProcesses;
@@ -42,7 +42,7 @@ int nProcesses;
 
 
 
-static void proc_update_status(pid_t pid, int status, int exit_code) {
+static void proc_update_status(pid_t pid, int status, int exitCode) {
 
     /******* FILL IN THE CODE *******/
     // Call everytime you need to update status and exit code of a process in PCBTable
@@ -50,7 +50,7 @@ static void proc_update_status(pid_t pid, int status, int exit_code) {
     for (int i = 0; i < nProcesses; i++) {
         if (processes[i].pid == pid) {
             processes[i].status = status;
-            processes[i].exitCode = exit_code;
+            processes[i].exitCode = exitCode;
             break;
         }
     }
@@ -94,8 +94,8 @@ static void command_info(char **commands) {
                     int status;
                     int result = waitpid(processes[i].pid, &status, WNOHANG);
                     if (result == processes[i].pid) {
-                        int exit_code = WEXITSTATUS(status);
-                        proc_update_status(processes[i].pid, status, exit_code);
+                        int exitCode = WEXITSTATUS(status);
+                        proc_update_status(processes[i].pid, status, exitCode);
                     }
                     printf("[%d] ", processes[i].pid);
                     switch (processes[i].status) {
@@ -256,8 +256,8 @@ static void command_exec(int len, char **cmd) {
                 waitpid(pid, &status, WUNTRACED);
             }
             if (WIFEXITED(status)) {
-                int exit_code = WEXITSTATUS(status);
-                proc_update_status(pid, 1, exit_code);
+                int exitCode = WEXITSTATUS(status);
+                proc_update_status(pid, 1, exitCode);
             }
         }
     } else {
@@ -317,7 +317,7 @@ void my_init(void) {
     // anything else you require
 
     // SIGCHLD signal handler for handling child processes
-    signal(SIGCHLD, proc_exit);
+    signal(SIGCHLD, update_exit);
 }
 
 void my_process_command(size_t num_tokens, char **tokens) {
@@ -428,15 +428,15 @@ void arg_parse(char **cmd, char ***arguments) {
 }
 
 
-void proc_exit() {
+void update_exit() {
     pid_t pid;
-    int exit_code;
-    pid = wait(&exit_code);
+    int exitCode;
+    pid = wait(&exitCode);
     if (pid > 0) {
         for (int i = 0; i < nProcesses; i++) {
             if (processes[i].pid == pid) {
                 processes[i].status = 1;
-                processes[i].exitCode = exit_code;
+                processes[i].exitCode = exitCode;
                 break;
             }
         }
