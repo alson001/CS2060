@@ -20,8 +20,9 @@
 #include <unistd.h>
 
 void add_process(pid_t pid);
+void update_terminate(pid_t pid, int status);
+void update_wait(pid_t pid, int index);
 void arg_parse(char **cmd, char ***arguments);
-int ampersand_command(char **tokens);
 void proc_exit();
 
 struct PCBTable processes[MAX_PROCESSES];
@@ -171,12 +172,7 @@ static void command_wait(char **args) {
     for (int i = 0; i < nProcesses; i++) {
         if (processes[i].pid == pid) {
             if (processes[i].status == 2) {
-    // If the process indicated by the process id is RUNNING, wait for it (can use waitpid()).
-                int status;
-                waitpid(pid, &status, WUNTRACED);
-    // After the process terminate, update status and exit code (call proc_update_status())
-                processes[i].status = WIFEXITED(status) ? 1 : (WIFSIGNALED(status) ? 3 : 2);
-                processes[i].exitCode = WIFEXITED(status) ? WEXITSTATUS(status) : -1;
+                update_wait(processes[i].pid, i);
             }
             break;
         }
@@ -202,8 +198,7 @@ static void command_terminate(char **cmd) {
         //Terminate it by using kill() to send SIGTERM
         // The state of {PID} should be “Terminating” until {PID} exits
         if (processes[i].pid == pid && processes[i].status == 2) {
-            int exit_code = kill(pid, SIGTERM);
-            proc_update_status(pid, 3, exit_code);
+            update_terminate(pid, 3);
             break;
         }
     }
@@ -383,7 +378,36 @@ void add_process(pid_t pid) {
     nProcesses++;
 }
 
+void update_terminate(pid_t pid, int status) {
+    int exitCode = kill(pid, SIGTERM);
+    for (int i = 0; i < nProcesses; i++) {
+        if (processes[i].pid == pid) {
+            processes[i].status = status;
+            processes[i].exitCode = exitCode;
+            break;
+        }
+    }
+}
 
+void update_wait(pid_t pid, int index) {
+    // If the process indicated by the process id is RUNNING, wait for it (can use waitpid()).
+    int status;
+    waitpid(pid, &status, WUNTRACED);
+    // After the process terminate, update status and exit code (call proc_update_status())
+    if (WIFEXITED(status)) {
+        processes[index].status = 1;
+    } else if (WIFSIGNALED(status)) {
+        processes[index].status = 3;
+    } else {
+        processes[index].status = 2;
+    }
+    if (WIFEXITED(status)) {
+        int exitCode = WEXITSTATUS(status);
+        processes[index].exitCode = exitCode;
+    } else {
+        processes[index].exitCode = -1;
+    }
+}
 
 void arg_parse(char **cmd, char ***arguments) {
     char **arg_arr = (char**) calloc(1, sizeof(char *));
@@ -404,24 +428,17 @@ void arg_parse(char **cmd, char ***arguments) {
 }
 
 
-int ampersand_command(char **tokens) {
-    int index = 0;
-    while (tokens[index] != (char *) NULL) {
-        if (strcmp(tokens[index], (char *) "&") == 0) {
-            return 1;
-        }
-        index++;
-    }
-
-    return 0;
-}
-
-
 void proc_exit() {
     pid_t pid;
     int exit_code;
     pid = wait(&exit_code);
     if (pid > 0) {
-        proc_update_status(pid, 1, exit_code);
+        for (int i = 0; i < nProcesses; i++) {
+            if (processes[i].pid == pid) {
+                processes[i].status = 1;
+                processes[i].exitCode = exit_code;
+                break;
+            }
+        }
     }
 }
