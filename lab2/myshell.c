@@ -226,7 +226,7 @@ static void command_terminate(char **cmd) {
  * Program Execution
  ******************************************************************************/
 
-static void command_exec(char **cmd) {
+static void command_exec(int len, char **cmd) {
     char **arg = NULL;
     char *program = cmd[0];
     arg_parse(cmd, &arg);
@@ -247,16 +247,19 @@ static void command_exec(char **cmd) {
             // register the process in process table
             add_process(pid);
             int status;
-            // If child process need to execute in the background  (if & is present at the end )
-            if (ampersand_command(cmd)) {
+            int isBackground = 0;
+            if (len > 1 && strcmp(cmd[len - 1], "&") == 0) {
+                isBackground = 1;
+            }
+            if (isBackground) {
                 //print Child [PID] in background
                 printf("Child [%d] in background\n", pid);
                 waitpid(pid, &status, WNOHANG);
             } else {
-                // else wait for the child process to exit 
-                // Use waitpid() with WNOHANG when not blocking during wait and  waitpid() with WUNTRACED when parent needs to block due to wait 
-                waitpid(pid, &status, WUNTRACED);       
-            }   
+                // else wait for the child process to exit
+                // Use waitpid() with WNOHANG when not blocking during wait and  waitpid() with WUNTRACED when parent needs to block due to wait
+                waitpid(pid, &status, WUNTRACED);
+            }
             if (WIFEXITED(status)) {
                 int exit_code = WEXITSTATUS(status);
                 proc_update_status(pid, 1, exit_code);
@@ -272,7 +275,7 @@ static void command_exec(char **cmd) {
  * Command Processor
  ******************************************************************************/
 
-static void command(char **commands) {
+static void command(int len,char **commands) {
 
 
         /******* FILL IN THE CODE *******/
@@ -298,7 +301,7 @@ static void command(char **commands) {
         my_quit();
     } else {
         // call command_exec() for all other commands           : ex1, ex2, ex3
-        command_exec(commands);
+        command_exec(len, commands);
     }
 
     // if command is "fg" call command_fg()                 : ex4
@@ -324,40 +327,36 @@ void my_init(void) {
 
 void my_process_command(size_t num_tokens, char **tokens) {
 
-
-    /******* FILL IN THE CODE *******/
-
-    // Array of individual arguments
-    char **arg_arr = tokens;
-
-    // Count number of commands to parse
-    int cmd_count = 1;
-    for (size_t j = 0; j < num_tokens - 1; j++) {
-        if (strcmp(arg_arr[j], (char *) ";") == 0) {
-            cmd_count++;
+    // Determine the number of commands to execute
+    int nCommands = 0;
+    for (size_t i = 0; i < num_tokens - 1; i++) {
+        if (strcmp(tokens[i], (char *) ";") != 0) {
+            continue;
         }
+        nCommands++;
+    }
+    nCommands++;
+
+    // Execute each command in the input
+    int argIndex = 0;
+    for (int i = 0; i < nCommands; i++) {
+        char **commandArgs = malloc(sizeof(char *) * num_tokens);
+        int numArgs = 0;
+
+        //if not NULL || ";", increase length of the argument
+        while (tokens[argIndex] != NULL && strcmp(tokens[argIndex], (char *) ";") != 0) {
+            commandArgs[numArgs] = tokens[argIndex];
+            argIndex++;
+            numArgs++;
+        }
+
+        commandArgs[numArgs] = NULL;
+        command(numArgs, commandArgs);
+
+        argIndex++;
+        free(commandArgs);
     }
 
-    // Split tokens at NULL or ; to get a single command (ex1, ex2, ex3, ex4(fg command))
-    // for example :  /bin/ls ; /bin/sleep 5 ; /bin/pwd
-    // split the above line as first command : /bin/ls , second command: /bin/pwd  and third command:  /bin/pwd
-    int arg_index = 0;
-    
-    for (int i = 0; i < cmd_count; i++) {
-        char **cmd = malloc(sizeof(char *) * num_tokens);
-        int cmd_index = 0;
-
-        while (arg_arr[arg_index] != NULL && strcmp(arg_arr[arg_index], (char *) ";")) {
-            cmd[cmd_index] = arg_arr[arg_index];
-            arg_index++;
-            cmd_index++;
-        }
-        cmd[cmd_index] = NULL;
-        // Call command() and pass each individual command as arguements        
-        command(cmd);
-        arg_index++;
-        free(cmd);
-    }
 }
 
 void my_quit(void) {
