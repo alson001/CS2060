@@ -22,8 +22,8 @@
 void add_process(pid_t pid);
 void update_terminate(pid_t pid, int status);
 void update_wait(pid_t pid, int index);
-void arg_parse(char **cmd, char ***arguments);
-char** redirect_parse(char **cmd);
+void update_redirect(int len, char **args);
+void parse(char **cmd, char ***arguments);
 void update_exit();
 
 struct PCBTable processes[MAX_PROCESSES];
@@ -45,7 +45,6 @@ int nProcesses;
 
 static void proc_update_status(pid_t pid, int status, int exitCode) {
 
-    /******* FILL IN THE CODE *******/
     // Call everytime you need to update status and exit code of a process in PCBTable
     // May use WIFEXITED, WEXITSTATUS, WIFSIGNALED, WTERMSIG, WIFSTOPPED
     
@@ -178,10 +177,10 @@ static void command_wait(char **args) {
 
 
 static void command_terminate(char **args) {
-        /******* FILL IN THE CODE *******/
 
+    // Terminate
     char **arguments = NULL;
-    arg_parse(args, &arguments);
+    parse(args, &arguments);
 
     // Edge cases: No specified PID and invalid terminate call (too many arguments)
     if (arguments[1] == NULL || arguments[2] != NULL) {
@@ -220,10 +219,10 @@ static void command_terminate(char **args) {
  * Program Execution
  ******************************************************************************/
 
-static void command_exec(int len, char **cmd) {
-    char **arg = NULL;
-    char *program = cmd[0];
-    arg_parse(cmd, &arg);
+static void command_exec(int len, char **args) {
+    char **arguments = NULL;
+    char *program = args[0];
+    parse(args, &arguments);
 
     // check if program exists and is executable : use access()
     if (access(program, R_OK) == 0 && access(program, X_OK) == 0) {
@@ -237,43 +236,15 @@ static void command_exec(int len, char **cmd) {
             add_process(pid);
 
             for (int i = 0; i < len; i++) {
-                if (strcmp(cmd[i], ">") == 0 || strcmp(cmd[i], "<") == 0 ||  
-                    strcmp(cmd[i], "2>") == 0) {
-                    char **files = redirect_parse(cmd);
-                    // Handle STDIN
-                    if (files[0] != NULL) {
-                        int fds = open(files[0], O_RDONLY);
-                        if (fds == -1) {
-                            fprintf(stderr, "%s does not exist\n", files[0]);
-                            free(files);
-                            // Exit with error for child process
-                            exit(1);
-                        }
-
-                        dup2(fds, STDIN_FILENO);
-                        close(fds);
-                    } 
-                    // Handle STDOUT
-                    if (files[1] != NULL) {
-                        int fds = open(files[1], O_WRONLY | O_CREAT | O_TRUNC | O_SYNC, 0644);
-                        dup2(fds, STDOUT_FILENO);
-                        close(fds);
-                    }
-                    // Handle STDERR
-                    if (files[2] != NULL) {
-                        int fds = open(files[2], O_WRONLY | O_CREAT | O_TRUNC | O_SYNC, 0644);
-                        dup2(fds, STDERR_FILENO);
-                        close(fds);
-                    }
-
-                    // call execv() to execute the command in the child process
-                    free(files);
+                if (strcmp(args[i], ">") == 0 || strcmp(args[i], "<") == 0 ||  
+                    strcmp(args[i], "2>") == 0) {
+                    update_redirect(len, args);
                     break;
                 }
             }
 
-            execv(program, arg);
-            free(arg);
+            execv(program, arguments);
+            free(arguments);
             // Exit the child
             exit(0);
         } else {
@@ -282,7 +253,7 @@ static void command_exec(int len, char **cmd) {
             add_process(pid);
             int status;
             int isBackground = 0;
-            if (len > 1 && strcmp(cmd[len - 1], "&") == 0) {
+            if (len > 1 && strcmp(args[len - 1], "&") == 0) {
                 isBackground = 1;
             }
             if (isBackground) {
@@ -302,7 +273,7 @@ static void command_exec(int len, char **cmd) {
     } else {
         fprintf(stderr, "%s not found\n", program);
     }
-    free(arg);
+    free(arguments);
 }
 
 /*******************************************************************************
@@ -448,48 +419,83 @@ void update_wait(pid_t pid, int index) {
     }
 }
 
-void arg_parse(char **cmd, char ***arguments) {
-    char **arg_arr = (char**) calloc(1, sizeof(char *));
+void update_redirect(int len, char **args) {
+
+    // Initialize an array of 3 to track if "<", ">" or "2>" is used 
+    char **files = malloc(sizeof(char *) * 3);
+
+    // Set each element in array to null
+    for (int i = 0; i < 3; i++) {
+        files[i] = NULL;
+    }
+
+    for (int i = 0; i < len; i++) {
+        if (strcmp(args[i], (char *) "<") == 0) {
+            files[0] = args[i + 1];
+        } else if (strcmp(args[i], (char *) ">") == 0) {
+            files[1] = args[i + 1];
+        } else if (strcmp(args[i], (char *) "2>") == 0) {
+            files[2] = args[i + 1];
+        }
+    }
+
+    // Handle STDIN
+    if (files[0] != NULL) {
+        int fds = open(files[0], O_RDONLY);
+        if (fds == -1) {
+            fprintf(stderr, "%s does not exist\n", files[0]);
+            free(files);
+            // Exit with error for child process
+            exit(1);
+        }
+
+        dup2(fds, STDIN_FILENO);
+        close(fds);
+    }
+
+    // Handle STDOUT
+    if (files[1] != NULL) {
+        int fds = open(files[1], O_WRONLY | O_CREAT | O_TRUNC | O_SYNC, 0644);
+        dup2(fds, STDOUT_FILENO);
+        close(fds);
+    }
+
+    // Handle STDERR
+    if (files[2] != NULL) {
+        int fds = open(files[2], O_WRONLY | O_CREAT | O_TRUNC | O_SYNC, 0644);
+        dup2(fds, STDERR_FILENO);
+        close(fds);
+    }
+
+    // call execv() to execute the command in the child process
+    free(files);
+}
+
+
+void parse(char **args, char ***arguments) {
+
+    // calloc allocates the requested memory and returns a pointer to it
+    char **arr = (char**) calloc(1, sizeof(char *));
+    
     int i = 0;
-    while (cmd[i] != (char *) NULL) {
-        if (strcmp(cmd[i], (char *) "&") == 0 || strcmp(cmd[i], (char *) "<") == 0 ||
-            strcmp(cmd[i], (char *) ">") == 0 || strcmp(cmd[i], (char *) "2>") == 0) {
+    while (args[i] != NULL) {
+        if (strcmp(args[i], (char *) "&") == 0) {
+            break;
+        } else if (strcmp(args[i], (char *) "<") == 0 || strcmp(args[i], (char *) ">") == 0 
+                  || strcmp(args[i], (char *) "2>") == 0) {
             break;
         } else {
-            arg_arr[i] = cmd[i];
+            arr[i] = args[i];
             i++;
-            // realloc to dynamically change memory allocation of argument array
-            arg_arr = realloc(arg_arr, (i + 1) * sizeof(char *));
+
+            // realloc to dynamically change memory allocation of array
+            arr = realloc(arr, (i + 1) * sizeof(char *));
         }
     }
     // Add NULL for termination for each command
-    arg_arr[i] = NULL;
-    *arguments = arg_arr;
+    arr[i] = NULL;
+    *arguments = arr;
 }
-
-char** redirect_parse(char **cmd) {
-    char **files = malloc(sizeof(char *) * 3);
-
-    // Explicitly initialize each pointer to null
-    for (int i = 0; i < 3; i++) {
-        files[i] = (char *) NULL;
-    }
-
-    int i = 0;
-    while (cmd[i] != NULL) {
-        if (strcmp(cmd[i], (char *) "<") == 0) {
-            files[0] = cmd[i + 1];
-        } else if (strcmp(cmd[i], (char *) ">") == 0) {
-            files[1] = cmd[i + 1];
-        } else if (strcmp(cmd[i], (char *) "2>") == 0) {
-            files[2] = cmd[i + 1];
-        }
-        i++;
-    }
-
-    return files;
-}
-
 
 void update_exit() {
     pid_t pid;
