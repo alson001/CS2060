@@ -23,6 +23,7 @@ void add_process(pid_t pid);
 void update_terminate(pid_t pid, int status);
 void update_wait(pid_t pid, int index);
 void arg_parse(char **cmd, char ***arguments);
+char** redirect_parse(char **cmd);
 void update_exit();
 
 struct PCBTable processes[MAX_PROCESSES];
@@ -47,6 +48,9 @@ static void proc_update_status(pid_t pid, int status, int exitCode) {
     /******* FILL IN THE CODE *******/
     // Call everytime you need to update status and exit code of a process in PCBTable
     // May use WIFEXITED, WEXITSTATUS, WIFSIGNALED, WTERMSIG, WIFSTOPPED
+    
+    // Find the pid in the processes array
+    // Set its status and exitcode as stated
     for (int i = 0; i < nProcesses; i++) {
         if (processes[i].pid == pid) {
             processes[i].status = status;
@@ -61,27 +65,16 @@ static void proc_update_status(pid_t pid, int status, int exitCode) {
  * Built-in Commands
  ******************************************************************************/
 
-static void command_info(char **commands) {
-    if (commands[1] == NULL) {
+static void command_info(char **args) {
+
+    // Edge case: if person types "info" command with no arguments after
+    if (args[1] == NULL) {
         fprintf(stderr, "Wrong command\n");
         return;
     }
 
-    // If option is 0
-        //Print details of all processes in the order in which they were run. You will need to print their process IDs, their current status (Exited, Running, Terminating, Stopped)
-        // For Exited processes, print their exit codes.
-    // If option is 1
-        //Print the number of exited process.
-    // If option is 2
-        //Print the number of running process.
-    // If option is 3
-        //Print the number of terminating process.
-    // If option is 4
-        //Print the number of stopped process.
-
-    //For all other cases print “Wrong command” to stderr.
     // Parse the option.
-    int option = atoi(commands[1]);
+    int option = atoi(args[1]);
     int numExited, numRunning, numTerminating, numStopped;   
     // Perform the requested action.
     switch (option) {
@@ -157,19 +150,23 @@ static void command_info(char **commands) {
             break;
         default:
             // Invalid option.
-            fprintf(stderr, "Error: Invalid option.\n");
+            fprintf(stderr, "Wrong Command\n");
             break;
     }
 }
 
 static void command_wait(char **args) {
 
-  if (args[1] == NULL) {
+    // Edge case: No specified PID and invalid wait call (too many arguments)
+    if (args[1] == NULL || args[2] != NULL) {
+        free(args);
         return;
     }
 
     pid_t pid = atoi(args[1]);
     for (int i = 0; i < nProcesses; i++) {
+    // If process is RUNNING:
+        // Wait it by using update_wait()  
         if (processes[i].pid == pid) {
             if (processes[i].status == 2) {
                 update_wait(processes[i].pid, i);
@@ -180,29 +177,31 @@ static void command_wait(char **args) {
 }
 
 
-static void command_terminate(char **cmd) {
+static void command_terminate(char **args) {
         /******* FILL IN THE CODE *******/
-    char **arg = NULL;
-    arg_parse(cmd, &arg);
 
-    // Handle edge case
-    if (arg[1] == NULL || arg[2] != NULL) {
-        free(arg);
+    char **arguments = NULL;
+    arg_parse(args, &arguments);
+
+    // Edge cases: No specified PID and invalid terminate call (too many arguments)
+    if (arguments[1] == NULL || arguments[2] != NULL) {
+        free(arguments);
         return;
     }
 
-    int pid = atoi(arg[1]);
-    // Find the pid in the PCBTable
+    int pid = atoi(arguments[1]);
+    // Find the pid in the processes array
     for (int i = 0; i < nProcesses; i++) {
-    // If {PID} is RUNNING:
-        //Terminate it by using kill() to send SIGTERM
-        // The state of {PID} should be “Terminating” until {PID} exits
-        if (processes[i].pid == pid && processes[i].status == 2) {
-            update_terminate(pid, 3);
+    // If process is RUNNING:
+        // Terminate it by using update_terminate()
+        if (processes[i].pid == pid)  {
+            if (processes[i].status == 2) {
+                update_terminate(processes[i].pid, 3);
+            }
             break;
         }
     }
-    free(arg);
+    free(arguments);
 }
 
 // static void command_fg(/* pass necessary parameters*/) {
@@ -228,11 +227,51 @@ static void command_exec(int len, char **cmd) {
 
     // check if program exists and is executable : use access()
     if (access(program, R_OK) == 0 && access(program, X_OK) == 0) {
+        
         // fork a subprocess and execute the program
         pid_t pid;
+
         if ((pid = fork()) == 0) {
             // CHILD PROCESS
+            // register the process in process table
             add_process(pid);
+
+            for (int i = 0; i < len; i++) {
+                if (strcmp(cmd[i], ">") == 0 || strcmp(cmd[i], "<") == 0 ||  
+                    strcmp(cmd[i], "2>") == 0) {
+                    char **files = redirect_parse(cmd);
+                    // Handle STDIN
+                    if (files[0] != NULL) {
+                        int fds = open(files[0], O_RDONLY);
+                        if (fds == -1) {
+                            fprintf(stderr, "%s does not exist\n", files[0]);
+                            free(files);
+                            // Exit with error for child process
+                            exit(1);
+                        }
+
+                        dup2(fds, STDIN_FILENO);
+                        close(fds);
+                    } 
+                    // Handle STDOUT
+                    if (files[1] != NULL) {
+                        int fds = open(files[1], O_WRONLY | O_CREAT | O_TRUNC | O_SYNC, 0644);
+                        dup2(fds, STDOUT_FILENO);
+                        close(fds);
+                    }
+                    // Handle STDERR
+                    if (files[2] != NULL) {
+                        int fds = open(files[2], O_WRONLY | O_CREAT | O_TRUNC | O_SYNC, 0644);
+                        dup2(fds, STDERR_FILENO);
+                        close(fds);
+                    }
+
+                    // call execv() to execute the command in the child process
+                    free(files);
+                    break;
+                }
+            }
+
             execv(program, arg);
             free(arg);
             // Exit the child
@@ -247,12 +286,12 @@ static void command_exec(int len, char **cmd) {
                 isBackground = 1;
             }
             if (isBackground) {
-                //print Child [PID] in background
+                // print Child [PID] in background
+                // Use waitpid() with WNOHANG when not blocking during wait
                 printf("Child [%d] in background\n", pid);
                 waitpid(pid, &status, WNOHANG);
-            } else {
-                // else wait for the child process to exit
-                // Use waitpid() with WNOHANG when not blocking during wait and  waitpid() with WUNTRACED when parent needs to block due to wait
+            } else {  
+                // Use waitpid() with WUNTRACED when parent needs to block due to wait
                 waitpid(pid, &status, WUNTRACED);
             }
             if (WIFEXITED(status)) {
@@ -413,7 +452,8 @@ void arg_parse(char **cmd, char ***arguments) {
     char **arg_arr = (char**) calloc(1, sizeof(char *));
     int i = 0;
     while (cmd[i] != (char *) NULL) {
-        if (strcmp(cmd[i], (char *) "&") == 0 || strcmp(cmd[i], (char *) "<") == 0 || strcmp(cmd[i], (char *) ">") == 0 || strcmp(cmd[i], (char *) "2>") == 0) {
+        if (strcmp(cmd[i], (char *) "&") == 0 || strcmp(cmd[i], (char *) "<") == 0 ||
+            strcmp(cmd[i], (char *) ">") == 0 || strcmp(cmd[i], (char *) "2>") == 0) {
             break;
         } else {
             arg_arr[i] = cmd[i];
@@ -425,6 +465,29 @@ void arg_parse(char **cmd, char ***arguments) {
     // Add NULL for termination for each command
     arg_arr[i] = NULL;
     *arguments = arg_arr;
+}
+
+char** redirect_parse(char **cmd) {
+    char **files = malloc(sizeof(char *) * 3);
+
+    // Explicitly initialize each pointer to null
+    for (int i = 0; i < 3; i++) {
+        files[i] = (char *) NULL;
+    }
+
+    int i = 0;
+    while (cmd[i] != NULL) {
+        if (strcmp(cmd[i], (char *) "<") == 0) {
+            files[0] = cmd[i + 1];
+        } else if (strcmp(cmd[i], (char *) ">") == 0) {
+            files[1] = cmd[i + 1];
+        } else if (strcmp(cmd[i], (char *) "2>") == 0) {
+            files[2] = cmd[i + 1];
+        }
+        i++;
+    }
+
+    return files;
 }
 
 
