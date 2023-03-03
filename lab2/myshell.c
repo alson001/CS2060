@@ -23,7 +23,7 @@ void add_process(pid_t pid);
 void update_terminate(pid_t pid, int status);
 void update_wait(pid_t pid, int index);
 void update_redirect(int len, char **args);
-void parse(char **cmd, char ***arguments);
+void parse(char **args, char ***arguments);
 void update_exit();
 
 struct PCBTable processes[MAX_PROCESSES];
@@ -282,15 +282,11 @@ static void command_exec(int len, char **args) {
 
 static void command(int len,char **commands) {
 
-
-        /******* FILL IN THE CODE *******/
-
     if (commands == NULL) {
         return;
     }
 
     char *process = commands[0];
-        /******* FILL IN THE CODE *******/
     
     if (strcmp(process, "info") == 0) {
         // if command is "info" call command_info()             : ex1
@@ -317,8 +313,6 @@ static void command(int len,char **commands) {
  ******************************************************************************/
 
 void my_init(void) {
-
-        /******* FILL IN THE CODE *******/
 
     nProcesses = 0;
     // use signal() with SIGTSTP to setup a signalhandler for ctrl+z : ex4
@@ -366,8 +360,6 @@ void my_process_command(size_t num_tokens, char **tokens) {
 
 void my_quit(void) {
 
-
-    /******* FILL IN THE CODE *******/
     // Kill every process in the PCB that ics either stopped or running
     for (int i = 0; i < nProcesses; i++) {
         if (processes[i].status == 2  || processes[i].status == 4) {
@@ -390,20 +382,13 @@ void add_process(pid_t pid) {
 
 void update_terminate(pid_t pid, int status) {
     int exitCode = kill(pid, SIGTERM);
-    for (int i = 0; i < nProcesses; i++) {
-        if (processes[i].pid == pid) {
-            processes[i].status = status;
-            processes[i].exitCode = exitCode;
-            break;
-        }
-    }
+    proc_update_status(pid, status, exitCode);
 }
 
 void update_wait(pid_t pid, int index) {
-    // If the process indicated by the process id is RUNNING, wait for it (can use waitpid()).
     int status;
     waitpid(pid, &status, WUNTRACED);
-    // After the process terminate, update status and exit code (call proc_update_status())
+
     if (WIFEXITED(status)) {
         processes[index].status = 1;
     } else if (WIFSIGNALED(status)) {
@@ -422,29 +407,29 @@ void update_wait(pid_t pid, int index) {
 void update_redirect(int len, char **args) {
 
     // Initialize an array of 3 to track if "<", ">" or "2>" is used 
-    char **files = malloc(sizeof(char *) * 3);
+    char **arr = malloc(sizeof(char *) * 3);
 
     // Set each element in array to null
     for (int i = 0; i < 3; i++) {
-        files[i] = NULL;
+        arr[i] = NULL;
     }
 
     for (int i = 0; i < len; i++) {
         if (strcmp(args[i], (char *) "<") == 0) {
-            files[0] = args[i + 1];
+            arr[0] = args[i + 1];
         } else if (strcmp(args[i], (char *) ">") == 0) {
-            files[1] = args[i + 1];
+            arr[1] = args[i + 1];
         } else if (strcmp(args[i], (char *) "2>") == 0) {
-            files[2] = args[i + 1];
+            arr[2] = args[i + 1];
         }
     }
 
     // Handle STDIN
-    if (files[0] != NULL) {
-        int fds = open(files[0], O_RDONLY);
+    if (arr[0] != NULL) {
+        int fds = open(arr[0], O_RDONLY);
         if (fds == -1) {
-            fprintf(stderr, "%s does not exist\n", files[0]);
-            free(files);
+            fprintf(stderr, "%s does not exist\n", arr[0]);
+            free(arr);
             // Exit with error for child process
             exit(1);
         }
@@ -454,21 +439,20 @@ void update_redirect(int len, char **args) {
     }
 
     // Handle STDOUT
-    if (files[1] != NULL) {
-        int fds = open(files[1], O_WRONLY | O_CREAT | O_TRUNC | O_SYNC, 0644);
+    if (arr[1] != NULL) {
+        int fds = open(arr[1], O_WRONLY | O_CREAT | O_TRUNC | O_SYNC, 0644);
         dup2(fds, STDOUT_FILENO);
         close(fds);
     }
 
     // Handle STDERR
-    if (files[2] != NULL) {
-        int fds = open(files[2], O_WRONLY | O_CREAT | O_TRUNC | O_SYNC, 0644);
+    if (arr[2] != NULL) {
+        int fds = open(arr[2], O_WRONLY | O_CREAT | O_TRUNC | O_SYNC, 0644);
         dup2(fds, STDERR_FILENO);
         close(fds);
     }
 
-    // call execv() to execute the command in the child process
-    free(files);
+    free(arr);
 }
 
 
@@ -479,8 +463,10 @@ void parse(char **args, char ***arguments) {
     
     int i = 0;
     while (args[i] != NULL) {
+        // ex1, ex2 to deal with "&"
         if (strcmp(args[i], (char *) "&") == 0) {
             break;
+        // ex3 to deal with "<", ">" and "2>"
         } else if (strcmp(args[i], (char *) "<") == 0 || strcmp(args[i], (char *) ">") == 0 
                   || strcmp(args[i], (char *) "2>") == 0) {
             break;
@@ -492,7 +478,8 @@ void parse(char **args, char ***arguments) {
             arr = realloc(arr, (i + 1) * sizeof(char *));
         }
     }
-    // Add NULL for termination for each command
+    
+    // Add NULL at end of array
     arr[i] = NULL;
     *arguments = arr;
 }
