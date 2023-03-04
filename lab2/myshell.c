@@ -20,7 +20,7 @@
 #include <unistd.h>
 
 void add_process(pid_t pid);
-void update_terminate(pid_t pid, int status);
+void update_terminate(pid_t pid, int index);
 void update_wait(pid_t pid, int index);
 void update_redirect(int len, char **args);
 void parse(char **args, char ***arguments);
@@ -195,7 +195,7 @@ static void command_terminate(char **args) {
         // Terminate it by using update_terminate()
         if (processes[i].pid == pid)  {
             if (processes[i].status == 2) {
-                update_terminate(processes[i].pid, 3);
+                update_terminate(processes[i].pid, i);
             }
             break;
         }
@@ -225,6 +225,54 @@ static void command_exec(int len, char **args) {
     parse(args, &arguments);
 
     // check if program exists and is executable : use access()
+    if (access(program, F_OK) == -1 || access(program, R_OK) == -1 || access(program, X_OK) == -1) {
+        fprintf(stderr, "%s not found\n", program);
+
+    } else {
+        // fork a subprocess and execute the program
+        pid_t pid;
+
+        if ((pid = fork()) == 0) {
+            // CHILD PROCESS
+            // register the process in process table
+            add_process(pid);
+            execv(program, arguments);
+            // Exit the child
+            exit(0);
+        } else {
+            // PARENT PROCESS
+            // register the process in process table
+            add_process(pid);
+            int status;
+            int isBackground = 0;
+            if (len > 1 && strcmp(args[len - 1], "&") == 0) {
+                isBackground = 1;
+            }
+            if (isBackground) {
+                // print Child [PID] in background
+                // Use waitpid() with WNOHANG when not blocking during wait
+                printf("Child [%d] in background\n", pid);
+                waitpid(pid, &status, WNOHANG);
+            } else {  
+                // Use waitpid() with WUNTRACED when parent needs to block due to wait
+                waitpid(pid, &status, WUNTRACED);
+            }
+            if (WIFEXITED(status)) {
+                int exitCode = WEXITSTATUS(status);
+                proc_update_status(pid, 1, exitCode);
+            }
+        } 
+    }
+
+    free(arguments);
+}
+
+static void command_redirect(int len, char **args) {
+    char **arguments = NULL;
+    char *program = args[0];
+    parse(args, &arguments);
+
+    // check if program exists and is executable : use access()
     if (access(program, R_OK) == 0 && access(program, X_OK) == 0) {
         
         // fork a subprocess and execute the program
@@ -234,14 +282,7 @@ static void command_exec(int len, char **args) {
             // CHILD PROCESS
             // register the process in process table
             add_process(pid);
-
-            for (int i = 0; i < len; i++) {
-                if (strcmp(args[i], ">") == 0 || strcmp(args[i], "<") == 0 ||  
-                    strcmp(args[i], "2>") == 0) {
-                    update_redirect(len, args);
-                    break;
-                }
-            }
+            update_redirect(len, args);
 
             execv(program, arguments);
             free(arguments);
@@ -301,10 +342,16 @@ static void command(int len,char **commands) {
         // if command is "quit" call my_quit()                  : ex1 
         my_quit();
     } else {
+        for (int i = 0; i < len; i++) {
+            if (strcmp(commands[i], ">") == 0 || strcmp(commands[i], "<") == 0 ||  
+                strcmp(commands[i], "2>") == 0) {
+                command_redirect(len, commands);
+                return;
+            }
+        } 
         // call command_exec() for all other commands           : ex1, ex2, ex3
         command_exec(len, commands);
     }
-
     // if command is "fg" call command_fg()                 : ex4
 }
 
@@ -380,9 +427,9 @@ void add_process(pid_t pid) {
     nProcesses++;
 }
 
-void update_terminate(pid_t pid, int status) {
-    int exitCode = kill(pid, SIGTERM);
-    proc_update_status(pid, status, exitCode);
+void update_terminate(pid_t pid, int index) {
+    processes[index].status = 3;  
+    kill(pid, SIGTERM);
 }
 
 void update_wait(pid_t pid, int index) {
@@ -488,7 +535,7 @@ void update_exit() {
     pid_t pid;
     int exitCode;
     pid = wait(&exitCode);
-    if (pid > 0) {
+    if (pid >= 0) {
         for (int i = 0; i < nProcesses; i++) {
             if (processes[i].pid == pid) {
                 processes[i].status = 1;
